@@ -99,7 +99,7 @@ async def send_state_2_pitch(phone_number: str, product_id: str):
 
 
 async def trigger_human_takeover(phone_number: str, reason: str = ""):
-    """Activates Telegram relay and mutes the bot."""
+    """Activates Telegram relay, mutes the bot, and sends chat history to admin."""
     crud.update_user_context(phone_number, "is_human_takeover", True)
     
     # Notify User
@@ -111,8 +111,30 @@ async def trigger_human_takeover(phone_number: str, reason: str = ""):
     )
     await whatsapp.send_text_message(phone_number, text)
     
-    # Notify Admin in Telegram
-    alert_msg = f"🚨 *New Human Handoff*\nPhone: `+{phone_number}`\nTrigger: {reason}"
+    # Fetch recent chat history for the Telegram Admin
+    user = crud.get_or_create_user(phone_number)
+    history = user.get("history", [])[-5:] # Grab the last 5 interactions
+    
+    history_log = ""
+    for msg in history:
+        role = msg.get("role", "user").upper()
+        content = msg.get("content", "")
+        # Clean up interactive IDs for readability
+        if "[Selection:" in content:
+            content = f"Clicked button: {content}"
+        history_log += f"*{role}:* {content}\n"
+        
+    if not history_log:
+        history_log = "No history available."
+
+    # Notify Admin in Telegram with the history attached
+    alert_msg = (
+        f"🚨 *New Human Handoff*\n"
+        f"Phone: `+{phone_number}`\n"
+        f"Trigger: {reason}\n\n"
+        f"--- *Last 5 Interactions* ---\n"
+        f"{history_log}"
+    )
     await whatsapp.send_telegram_alert(alert_msg)
 
 

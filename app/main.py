@@ -4,6 +4,7 @@ import re
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from app.core.config import settings
 from app.core import security
+from app.database import crud
 from app.logic import state_machine
 from app.services import whatsapp
 
@@ -109,11 +110,11 @@ async def process_telegram_payload(payload: dict):
         chat = message.get("chat", {})
         text = message.get("text", "")
 
-        # 1. Security constraint: Only process messages from your specific Ops Group
+        # 1. Security constraint: Only process messages from your Ops Group
         if str(chat.get("id")) != str(getattr(settings, "TELEGRAM_OPS_GROUP_ID", "")):
             return
 
-        # 2. Only process messages that are direct replies to the Bot's forwarded alerts
+        # 2. Only process messages that are direct replies to Bot alerts
         reply_to = message.get("reply_to_message", {})
         if not reply_to or not text:
             return
@@ -121,22 +122,36 @@ async def process_telegram_payload(payload: dict):
         original_text = reply_to.get("text", "")
         
         # 3. Extract the WhatsApp phone number from the original bot message
-        # Matches patterns like "+1234567890" or "Phone: +1234567890"
         match = re.search(r"\+?(\d{10,15})", original_text)
         
         if not match:
-            logger.warning("Could not extract a valid WA phone number from the Telegram reply.")
             return
         
         target_wa_number = match.group(1)
         
+        # ==========================================
+        # NEW: THE ADMIN KILL SWITCH
+        # ==========================================
+        if text.strip().lower() in ["/close", "/end", "/done"]:
+            # Flip the database flag back to false
+            crud.update_user_context(target_wa_number, "is_human_takeover", False)
+            
+            # Politely close out the chat for the user on WhatsApp
+            await whatsapp.send_text_message(
+                target_wa_number, 
+                "This chat has been marked as resolved! If you need anything else in the future, just type *hi* or *menu*. 👋"
+            )
+            
+            # Send yourself a confirmation in Telegram
+            await whatsapp.send_telegram_alert(f"✅ Chat with `+{target_wa_number}` closed. The bot is back in control.")
+            return
+        # ==========================================
+        
         # 4. Push the reply to the Meta API
         await whatsapp.send_text_message(target_wa_number, text)
-        logger.info(f"Successfully relayed Telegram response to WA: {target_wa_number}")
 
     except Exception as e:
         logger.error(f"Error processing Telegram payload: {e}", exc_info=True)
-
 
 if __name__ == "__main__":
     # This lets you start the server just by running the python file
