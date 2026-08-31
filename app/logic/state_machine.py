@@ -161,7 +161,8 @@ async def process_message(phone_number: str, message: dict):
             await trigger_human_takeover(phone_number, "User typed escape keyword")
         return
 
-    if lower_text in ["menu", "home", "reset", "start"]:
+    # Added greetings here so returning users get the menu, not an error
+    if lower_text in ["menu", "home", "reset", "start", "hi", "hey", "hello", "hola"]:
         crud.update_user_context(phone_number, "is_human_takeover", False)
         await send_state_0_greeting(phone_number)
         return
