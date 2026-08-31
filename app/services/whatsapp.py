@@ -129,3 +129,56 @@ async def send_list_message(
         "interactive": interactive_obj
     }
     return await _send_request(payload)
+
+
+async def send_cta_url_button(to_phone_number: str, body_text: str, button_text: str, url: str) -> Dict[str, Any]:
+    """
+    Sends an interactive message with a Call-To-Action (URL) button.
+    Opens directly in the user's browser.
+    """
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_phone_number,
+        "type": "interactive",
+        "interactive": {
+            "type": "cta_url",
+            "body": {
+                "text": body_text
+            },
+            "action": {
+                "name": "cta_url",
+                "parameters": {
+                    "display_text": button_text,
+                    "url": url
+                }
+            }
+        }
+    }
+    return await _send_request(payload)
+
+
+async def send_telegram_alert(message: str) -> Dict[str, Any]:
+    """
+    Asynchronously pushes an alert to the private ops group via Telegram.
+    Uses httpx to avoid blocking the FastAPI event loop.
+    """
+    # Safeguard in case env vars aren't loaded properly
+    if not hasattr(settings, 'TELEGRAM_BOT_TOKEN') or not settings.TELEGRAM_BOT_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN is missing. Cannot send alert.")
+        return {}
+        
+    url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": getattr(settings, 'TELEGRAM_OPS_GROUP_ID', ''),
+        "text": message
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, json=payload, timeout=10.0)
+            response.raise_for_status()
+            logger.info("Telegram alert dispatched successfully.")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to send Telegram alert: {e}")
+            return {}

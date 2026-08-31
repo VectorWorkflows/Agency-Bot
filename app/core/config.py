@@ -15,6 +15,18 @@ class Settings:
     MONGO_URI: str = os.getenv("MONGO_URI", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
+    import os
+
+# Form URLs
+GENERAL_QUERY_FORM_URL = os.getenv("GENERAL_QUERY_FORM_URL", "https://tally.so/r/0QRgZN")
+SCHEDULER_FORM_URL = os.getenv("SCHEDULER_FORM_URL", "https://tally.so/r/Y57qNv")
+FIELD_LOGGER_FORM_URL = os.getenv("FIELD_LOGGER_FORM_URL", "https://tally.so/r/44lzd5")
+TELEPHONY_FORM_URL = os.getenv("TELEPHONY_FORM_URL", "https://tally.so/r/2EGzLM")
+
+# Telegram Relay
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_OPS_GROUP_ID = os.getenv("TELEGRAM_OPS_GROUP_ID")
+
 settings = Settings()
 
 # ==========================================

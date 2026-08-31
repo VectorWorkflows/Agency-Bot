@@ -1,145 +1,132 @@
 import logging
-from app.core.config import SERVICES, PROJECTS, REVIEW_SLA
+from app.core import config
 from app.database import crud
-from app.services import whatsapp, ai_agent
+from app.services import whatsapp
 
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# JOURNEY HANDLERS
+# STATE HANDLERS (OUTBOUND MESSAGES)
 # ==========================================
 
-async def send_main_menu(phone_number: str):
-    """Sends the 4-option customer-facing main menu using a WhatsApp List Message."""
+async def send_state_0_greeting(phone_number: str):
+    """State 0: Universal Greeting (Main Menu)"""
+    text = (
+        "Hey! 👋 Welcome to *Vector Workflows*. We build smart automations, "
+        "APIs, and custom software to put your business operations on autopilot.\n\n"
+        "How can we help you scale today?"
+    )
+    buttons = [
+        {"id": "btn_products", "title": "📦 View Products"},
+        {"id": "btn_custom", "title": "⚙️ Custom Projects"},
+        {"id": "btn_human", "title": "🙋‍♂️ Talk to a Human"}
+    ]
+    await whatsapp.send_button_message(phone_number, text, buttons)
+    crud.set_user_state(phone_number, "STATE_0")
+
+
+async def send_state_1a_products(phone_number: str):
+    """State 1a: The Products Menu (List Message)"""
+    text = "We have a few battle-tested systems ready to deploy. Tap below to select one:"
     sections = [{
-        "title": "How can we help?",
+        "title": "Ready-Made Systems",
         "rows": [
-            {"id": "menu_service", "title": "Have a service in mind", "description": "Explore specific automation solutions"},
-            {"id": "menu_diagnosis", "title": "Figure out what I need", "description": "Describe workflow for consultation"},
-            {"id": "menu_portfolio", "title": "Show what you've built", "description": "View our live projects & demos"},
-            {"id": "menu_human", "title": "Speak with someone", "description": "Connect with our team directly"}
+            {"id": "prod_scheduler", "title": "🗓️ Dynamic Scheduler", "description": "AI calendar optimization"},
+            {"id": "prod_logger", "title": "📋 WA Field Logger", "description": "Turn chats into databases"},
+            {"id": "prod_telephony", "title": "📞 Smart Telephony", "description": "Missed call text-backs & IVR"}
         ]
     }]
     await whatsapp.send_list_message(
-        phone_number,
-        "Welcome to *Vector Workflows*! \n\nWhat can we help you with today?",
-        "Select an option",
-        sections,
-        "Main Menu"
+        phone_number, body_text=text, button_text="Select a Product...", sections=sections
     )
-    crud.set_user_state(phone_number, "MAIN_MENU")
+    crud.set_user_state(phone_number, "STATE_1A")
 
 
-async def handle_service_purchase(phone_number: str, selected_service_id: str = None):
-    """Journey 1: SERVICE_PURCHASE"""
-    if not selected_service_id:
-        rows = []
-        for svc_key, svc_data in SERVICES.items():
-            # WhatsApp List Row Titles are limited to 24 characters
-            title = svc_data["name"][:24] 
-            rows.append({"id": f"svc_{svc_key}", "title": title})
-        
-        sections = [{"title": "Available Services", "rows": rows}]
-        await whatsapp.send_list_message(
-            phone_number,
-            "Which service are you interested in?",
-            "View Services",
-            sections
+async def send_state_1b_custom(phone_number: str):
+    """State 1b: Custom Projects Pitch & Form"""
+    text = (
+        "Have a specific bottleneck? Whether you need intelligent bots for your preferred messaging apps, "
+        "deep CRM integrations, or a completely custom Python backend, we can build it.\n\n"
+        "Tap the button below to drop your requirements in our brief, and we'll prepare a roadmap for you.\n\n"
+        "_(Type *human* to speak with us, or *menu* to go back)_"
+    )
+    await whatsapp.send_cta_url_button(
+        to_phone_number=phone_number,
+        body_text=text,
+        button_text="📝 Open Intake Form",
+        url=getattr(config, "GENERAL_QUERY_FORM_URL", "https://tally.so/r/0QRgZN")
+    )
+    crud.set_user_state(phone_number, "STATE_1B")
+
+
+async def send_state_2_pitch(phone_number: str, product_id: str):
+    """State 2: Product-Specific Pitches"""
+    if product_id == "prod_scheduler":
+        text = (
+            "The *Dynamic Scheduler* adapts to your actual life—automatically adjusting your tasks "
+            "and energy levels regardless of when you wake up.\n\n"
+            "Tap below to fill out the onboarding brief so we can map your custom deployment:\n\n"
+            "_(Type *human* to speak with us, or *menu* to go back)_"
         )
-        crud.set_user_state(phone_number, "SERVICE_PURCHASE")
+        url = getattr(config, "SCHEDULER_FORM_URL", "https://tally.so/r/Y57qNv")
+        btn_text = "🗓️ Setup Scheduler"
+
+    elif product_id == "prod_logger":
+        text = (
+            "Stop scrolling through messy group chats. The *Field Logger* lets your engineers submit photos "
+            "and updates, while Gemini AI organizes everything into a clean database in the background.\n\n"
+            "Tap below to tell us about your operations and get a quote:\n\n"
+            "_(Type *human* to speak with us, or *menu* to go back)_"
+        )
+        url = getattr(config, "FIELD_LOGGER_FORM_URL", "https://tally.so/r/44lzd5")
+        btn_text = "📋 Logger Setup"
+
+    elif product_id == "prod_telephony":
+        text = (
+            "Never lose a lead to a missed call again. We build automated text-back pipelines, "
+            "IVR routing, and smart business phone systems that engage your customers instantly.\n\n"
+            "Tap below to blueprint your custom phone setup:\n\n"
+            "_(Type *human* to speak with us, or *menu* to go back)_"
+        )
+        url = getattr(config, "TELEPHONY_FORM_URL", "https://tally.so/r/2EGzLM")
+        btn_text = "📞 Telephony Setup"
+    else:
+        await send_state_0_greeting(phone_number)
         return
 
-    # Show specific service details
-    svc_key = selected_service_id.replace("svc_", "")
-    service = SERVICES.get(svc_key)
+    await whatsapp.send_cta_url_button(phone_number, text, btn_text, url)
+    crud.set_user_state(phone_number, "STATE_2")
+
+
+async def trigger_human_takeover(phone_number: str, reason: str = ""):
+    """Activates Telegram relay and mutes the bot."""
+    crud.update_user_context(phone_number, "is_human_takeover", True)
     
-    if service:
-        text = f"*{service['name']}*\n\n{service['description']}\n\n*Key Features:*\n"
-        for f in service['features']:
-            text += f"• {f}\n"
-        if service['youtube_url']:
-            text += f"\n*Watch Walkthrough:*\n{service['youtube_url']}\n"
-            
-        text += "\n_(Type *menu* to return or *human* to speak with our team)_"
-        await whatsapp.send_text_message(phone_number, text)
-    else:
-        await whatsapp.send_text_message(phone_number, "Service not found. Please type *menu* to return.")
-
-
-async def handle_business_diagnosis_start(phone_number: str):
-    """Journey 2: BUSINESS_DIAGNOSIS (Prompt)"""
+    # Notify User
     text = (
-        "We'd be happy to take a look.\n\n"
-        "Tell us how you currently handle the process from start to finish. Explain it however is easiest for you.\n\n"
-        "You can include the people involved, tools you use, repetitive work, handoffs, delays, or anything that feels unnecessarily time-consuming.\n\n"
-        "We'll review it and look for practical opportunities to save time and resources."
+        "Got it. Your request has been flagged and an engineer will review your chat history shortly. "
+        "You can drop any specific questions or details here in the meantime!\n\n"
+        "_(Note: If you don't receive a response within an hour, please drop your project details "
+        "in our brief here: " + getattr(config, "GENERAL_QUERY_FORM_URL", "https://tally.so/r/0QRgZN") + ")_"
     )
     await whatsapp.send_text_message(phone_number, text)
-    crud.set_user_state(phone_number, "BUSINESS_DIAGNOSIS")
-
-
-async def handle_workflow_submission(phone_number: str, text_body: str):
-    """Journey 2: BUSINESS_DIAGNOSIS (Submission Received)"""
-    # 1. Save verbatim text to MongoDB Context
-    crud.update_user_context(phone_number, "workflow_description", text_body)
-    crud.set_user_state(phone_number, "WORKFLOW_RECEIVED")
     
-    # 2. Acknowledge Receipt
+    # Notify Admin in Telegram
+    alert_msg = f"🚨 *New Human Handoff*\nPhone: `+{phone_number}`\nTrigger: {reason}"
+    await whatsapp.send_telegram_alert(alert_msg)
+
+
+async def trigger_fallback(phone_number: str):
+    """Handles unrecognized text inputs."""
     text = (
-        "Thanks for taking the time to explain that. We've received your workflow and our team will review it to identify practical opportunities for automation and improvement.\n\n"
-        f"We'll get back to you {REVIEW_SLA}."
-    )
-    await whatsapp.send_text_message(phone_number, text)
-    logger.info(f"NEW WORKFLOW SUBMITTED for human review by {phone_number}.")
-
-
-async def handle_portfolio_exploration(phone_number: str, selected_project_id: str = None):
-    """Journey 3: PORTFOLIO_EXPLORATION"""
-    if not selected_project_id:
-        rows = []
-        for proj_key, proj_data in PROJECTS.items():
-            title = proj_data["name"][:24]
-            rows.append({"id": f"proj_{proj_key}", "title": title})
-            
-        sections = [{"title": "Our Work", "rows": rows}]
-        await whatsapp.send_list_message(
-            phone_number,
-            "Here's some of the work we've been building. Which one would you like to explore?",
-            "View Projects",
-            sections
-        )
-        crud.set_user_state(phone_number, "PORTFOLIO_EXPLORATION")
-        return
-
-    # Show honest project details
-    proj_key = selected_project_id.replace("proj_", "")
-    project = PROJECTS.get(proj_key)
-    
-    if project:
-        text = f"*{project['name']}*\n\n{project['description']}\n\n*Status:* {project['status']}\n"
-        if project.get('notes'):
-            text += f"\n_{project['notes']}_\n"
-        if project.get('youtube_url'):
-            text += f"\n*Resources:*\n{project['youtube_url']}\n"
-            
-        text += "\n_(Type *menu* to go back)_"
-        await whatsapp.send_text_message(phone_number, text)
-    else:
-        await whatsapp.send_text_message(phone_number, "Project not found. Please type *menu* to return.")
-
-
-async def handle_human_request(phone_number: str, reason: str):
-    """Universal Fallback: HUMAN_REQUEST"""
-    crud.request_human(phone_number, reason)
-    text = (
-        "I've notified our team to step in! A human will take over this chat shortly.\n\n"
-        "_(If you want to cancel and return to the automated assistant, just type *menu*)_"
+        "Oh, I didn't quite catch that. 😅 Try using the predefined buttons for the best result.\n\n"
+        "If you want to skip the bot and chat with us directly, just type *human*."
     )
     await whatsapp.send_text_message(phone_number, text)
 
 
 # ==========================================
-# MASTER ROUTER
+# MASTER ROUTER (INBOUND WEBHOOK)
 # ==========================================
 
 async def process_message(phone_number: str, message: dict):
@@ -162,73 +149,50 @@ async def process_message(phone_number: str, message: dict):
             interactive_id = message["interactive"]["button_reply"]["id"]
         elif interactive_type == "list_reply":
             interactive_id = message["interactive"]["list_reply"]["id"]
-        crud.append_chat_history(phone_number, "user", f"[Interactive Selection: {interactive_id}]")
+        crud.append_chat_history(phone_number, "user", f"[Selection: {interactive_id}]")
     else:
-        crud.append_chat_history(phone_number, "user", f"[Unsupported Media Type: {msg_type}]")
-        return
+        crud.append_chat_history(phone_number, "user", f"[Media Type: {msg_type}]")
 
-    # 2. Global Escape Hatches (Deterministically bypasses AI)
     lower_text = text_body.lower()
-    if lower_text in ["menu", "reset", "exit", "restart", "home", "start"]:
-        crud.reset_to_menu(phone_number)
-        await send_main_menu(phone_number)
-        return
-        
-    if lower_text in ["human", "support", "help", "agent", "operator"]:
-        await handle_human_request(phone_number, "User typed escape keyword")
+
+    # 2. Hard Overrides (Works anytime, anywhere)
+    if lower_text in ["human", "support", "agent"]:
+        if not context.get("is_human_takeover"):
+            await trigger_human_takeover(phone_number, "User typed escape keyword")
         return
 
-    # Ignore automated processing if paused for human review
-    if context.get("human_requested") and state == "HUMAN_REQUEST":
-        logger.info(f"Chat with {phone_number} is paused for human review. Ignoring bot router.")
+    if lower_text in ["menu", "home", "reset", "start"]:
+        crud.update_user_context(phone_number, "is_human_takeover", False)
+        await send_state_0_greeting(phone_number)
         return
 
-    # 3. Handle Interactive Clicks (Zero AI Required - Fast Path)
+    # 3. Telegram Relay (Bot is muted, forwards to admin)
+    if context.get("is_human_takeover"):
+        if msg_type == "text":
+            await whatsapp.send_telegram_alert(f"💬 Message from `+{phone_number}`:\n\n{text_body}")
+        else:
+            await whatsapp.send_telegram_alert(f"📎 `+{phone_number}` sent a {msg_type}. Please check WhatsApp.")
+        return
+
+    # 4. Interactive Button Routing
     if interactive_id:
-        if interactive_id == "menu_service":
-            await handle_service_purchase(phone_number)
-        elif interactive_id == "menu_diagnosis":
-            await handle_business_diagnosis_start(phone_number)
-        elif interactive_id == "menu_portfolio":
-            await handle_portfolio_exploration(phone_number)
-        elif interactive_id == "menu_human":
-            await handle_human_request(phone_number, "User selected human from main menu")
-        elif interactive_id.startswith("svc_"):
-            await handle_service_purchase(phone_number, interactive_id)
-        elif interactive_id.startswith("proj_"):
-            await handle_portfolio_exploration(phone_number, interactive_id)
+        if interactive_id == "btn_products":
+            await send_state_1a_products(phone_number)
+        elif interactive_id == "btn_custom":
+            await send_state_1b_custom(phone_number)
+        elif interactive_id == "btn_human":
+            await trigger_human_takeover(phone_number, "User clicked Human button")
+        elif interactive_id.startswith("prod_"):
+            await send_state_2_pitch(phone_number, interactive_id)
         else:
-            await send_main_menu(phone_number)
+            await send_state_0_greeting(phone_number)
         return
 
-    # 4. State-Based Text Routing (Zero AI Required)
+    # 5. New User Initiation
     if state == "NEW":
-        await send_main_menu(phone_number)
+        await send_state_0_greeting(phone_number)
         return
 
-    elif state == "BUSINESS_DIAGNOSIS" and msg_type == "text":
-        # Any text sent in this state is treated as their open-ended workflow submission
-        await handle_workflow_submission(phone_number, text_body)
-        return
-        
-    elif state == "WORKFLOW_RECEIVED":
-        await whatsapp.send_text_message(phone_number, f"We've received your workflow and will review it {REVIEW_SLA}. Type *menu* to return to the main menu.")
-        return
-
-    # 5. NLP Intent Classification (Only used when free-text cannot be deterministically routed)
+    # 6. Fallback (If they type random text instead of clicking buttons)
     if msg_type == "text":
-        ai_result = await ai_agent.classify_intent(text_body)
-        intent = ai_result.get("intent", "UNCLEAR")
-        
-        logger.info(f"Classified intent for {phone_number}: {intent} (Confidence: {ai_result.get('confidence')})")
-        crud.update_user_context(phone_number, "detected_intent", intent)
-
-        if intent == "SERVICE_PURCHASE":
-            await handle_service_purchase(phone_number)
-        elif intent == "BUSINESS_DIAGNOSIS":
-            await handle_business_diagnosis_start(phone_number)
-        elif intent == "PORTFOLIO_EXPLORATION":
-            await handle_portfolio_exploration(phone_number)
-        else:
-            # Safe Fallback to UNCLEAR / HUMAN_REQUEST
-            await handle_human_request(phone_number, f"Unclear intent from natural language message: {text_body}")
+        await trigger_fallback(phone_number)

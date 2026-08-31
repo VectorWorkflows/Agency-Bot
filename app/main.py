@@ -1,15 +1,21 @@
 import uvicorn
 import logging
+import re
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from app.core.config import settings
 from app.core import security
 from app.logic import state_machine
+from app.services import whatsapp
 
 # Configure logging for production visibility
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Vector Workflows Agency Bot (MVP)")
+app = FastAPI(title="Vector Workflows Agency Bot (Omni-Channel)")
+
+# ==========================================
+# WHATSAPP WEBHOOKS
+# ==========================================
 
 @app.get("/webhook")
 async def verify_webhook(request: Request):
@@ -72,18 +78,66 @@ async def process_whatsapp_payload(payload: dict):
             message = value["messages"][0]
             sender_phone = message["from"]
             
-            logger.info(f"Incoming message received from {sender_phone}.")
+            logger.info(f"Incoming WA message received from {sender_phone}.")
             await state_machine.process_message(sender_phone, message)
             
     except Exception as e:
-        logger.error(f"Error processing webhook payload: {e}", exc_info=True)
+        logger.error(f"Error processing WA webhook payload: {e}", exc_info=True)
 
 
+# ==========================================
+# TELEGRAM WEBHOOKS (THE RELAY)
+# ==========================================
 
-from fastapi import FastAPI, Request
-# ... [your existing FastAPI routing code] ...
+@app.post("/webhook/telegram")
+async def receive_telegram_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Receives messages sent by the admin inside the Telegram Ops Group.
+    """
+    payload = await request.json()
+    background_tasks.add_task(process_telegram_payload, payload)
+    return {"status": "ok"}
 
-# Add this at the very bottom:
+
+async def process_telegram_payload(payload: dict):
+    """
+    Extracts the phone number from the replied-to message and pushes 
+    the admin's text back to the WhatsApp API.
+    """
+    try:
+        message = payload.get("message", {})
+        chat = message.get("chat", {})
+        text = message.get("text", "")
+
+        # 1. Security constraint: Only process messages from your specific Ops Group
+        if str(chat.get("id")) != str(getattr(settings, "TELEGRAM_OPS_GROUP_ID", "")):
+            return
+
+        # 2. Only process messages that are direct replies to the Bot's forwarded alerts
+        reply_to = message.get("reply_to_message", {})
+        if not reply_to or not text:
+            return
+
+        original_text = reply_to.get("text", "")
+        
+        # 3. Extract the WhatsApp phone number from the original bot message
+        # Matches patterns like "+1234567890" or "Phone: +1234567890"
+        match = re.search(r"\+?(\d{10,15})", original_text)
+        
+        if not match:
+            logger.warning("Could not extract a valid WA phone number from the Telegram reply.")
+            return
+        
+        target_wa_number = match.group(1)
+        
+        # 4. Push the reply to the Meta API
+        await whatsapp.send_text_message(target_wa_number, text)
+        logger.info(f"Successfully relayed Telegram response to WA: {target_wa_number}")
+
+    except Exception as e:
+        logger.error(f"Error processing Telegram payload: {e}", exc_info=True)
+
+
 if __name__ == "__main__":
     # This lets you start the server just by running the python file
     uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
